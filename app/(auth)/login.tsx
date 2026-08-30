@@ -1,10 +1,53 @@
 import { useRouter } from "expo-router";
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { useState } from "react";
+import { ActivityIndicator, Alert, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useAuth } from "../../src/context/AuthContext";
 
 
 export default function LogIn() {
     const router = useRouter();
+
+    const [email, setEmail] = useState("");
+    const [password, setPassword] = useState("");
+    const [isLoading, setIsLoading] = useState(false);
+
+    const { signIn } = useAuth();
+
+    const showAlert = (title: string, message: string) => {
+        if (Platform.OS === "web") {
+            window.alert(`${title}\n\n${message}`);
+            return;
+        }
+
+        Alert.alert(title, message);
+    };
+
+
+    const handleLogIn = async () => {
+        if (!email || !password){
+            showAlert("Error", "Fill out all of the fields");
+        }
+
+    
+        setIsLoading(true);
+
+        try {
+            await signIn(email, password);
+            router.replace("/(tabs)");
+        } catch (error) {
+            if (error) {
+                console.error("Error", error);
+            }
+
+            showAlert("Error", "logging in failed");
+        } finally {
+            setIsLoading(false);
+        }
+
+        
+    }
+
 
     return (
        <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
@@ -17,7 +60,7 @@ export default function LogIn() {
                 <Text style={styles.kicker}>Gym Planner</Text>
                 <Text style={styles.title}>Welcome back</Text>
                 <Text style={styles.subtitle}>
-                    Let's get back on maintaining your workout plan!
+                    Let&apos;s get back on maintaining your workout plan!
                 </Text>
 
                 <TextInput 
@@ -27,6 +70,8 @@ export default function LogIn() {
                     keyboardType="email-address"
                     autoComplete="email"
                     autoCapitalize="none"
+                    value={email}
+                    onChangeText={setEmail}
                 />
 
                 <TextInput 
@@ -36,14 +81,20 @@ export default function LogIn() {
                     autoComplete="password"
                     autoCapitalize="none"
                     secureTextEntry
+                    value={password}
+                    onChangeText={setPassword}
                 />
 
 
                 <TouchableOpacity
                     style={styles.primaryButton}
+                    onPress={handleLogIn}
                 >
-                    <Text style={styles.primaryButtonText}>Sign In</Text>
-
+                    {isLoading ? 
+                    (<ActivityIndicator size={24} color="#fff"/>)
+                    :
+                    (<Text style={styles.primaryButton}> Sign In </Text>)
+                    }
                 </TouchableOpacity>
 
 
@@ -52,7 +103,7 @@ export default function LogIn() {
                     onPress={() => router.push("/(auth)/signup")}
                 >
                     <Text style={styles.secondaryButtonText}>
-                        Don't have an account? <Text style={styles.linkText}>Sign Up</Text>
+                        Don&apos;t have an account? <Text style={styles.linkText}>Sign Up</Text>
                     </Text>
 
                 </TouchableOpacity>

@@ -37,7 +37,7 @@ export default function CharacterSelectCard({
       delayLongPress={500}
     >
       <View style={styles.imageShell}>
-        <Image source={image} style={styles.characterImage} />
+        <Image source={image} resizeMode="contain" style={styles.characterImage} />
       </View>
 
       <View style={styles.titleShell}>
@@ -61,7 +61,6 @@ const styles = StyleSheet.create({
   characterImage: {
     height: 46,
     width: 46,
-    resizeMode: "contain",
   },
 
   characterCard: {

@@ -2,6 +2,8 @@ import { useRouter } from "expo-router";
 import { useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Button } from "@expo/ui";
+
 import CharacterSelectCard, {
   CharacterItem,
 } from "../../components/CharacterSelectCard";
@@ -83,14 +85,20 @@ export default function Index() {
               />
             ))}
           </View>
-
-          <BottomSheetComponent 
+          
+          <BottomSheetComponent
             isPresented={selectedCharacter !== null}
-            title={`Delete "${selectedCharacter?.title}"?`}
-            confirmLabel={"Delete Character"}
             onDismiss={() => setSelectedCharacter(null)}
-            onConfirm={() => selectedCharacter ? handleDeleteChar(selectedCharacter.id) : null}
-          />
+            title={`Delete "${selectedCharacter?.title}"`}
+          >
+            <Button
+              label="Delete Character"
+              onPress={() => selectedCharacter ? handleDeleteChar(selectedCharacter.id) : null}
+            />
+              
+
+          </BottomSheetComponent>
+
 
           
         </View>

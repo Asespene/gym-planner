@@ -1,15 +1,22 @@
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { Alert, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { signUp } from "../../src/context/AuthContext";
+
+import { useAuth } from "../../src/context/AuthContext";
 
 export default function SignUp() {
   const router = useRouter();
+  
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const { signUp } = useAuth();
+
+  
 
   const showAlert = (title: string, message: string) => {
     if (Platform.OS === "web") {
@@ -23,16 +30,32 @@ export default function SignUp() {
   const handleSignUp = async () => {
     if (!email || !password || !confirmPassword) {
       showAlert("Error", "Must fill in each of the fields!");
+      return;
     }
 
-    if (password.length < 3) {
-      showAlert("Error","Password must be at least 3 characters!");
+    if (password.length < 6) {
+      showAlert("Error","Password must be at least 6 characters!");
+      return;
     }
+
+    if (password !== confirmPassword) {
+      showAlert("Error", "Passwords do not match!");
+      return;
+    }
+
+    setIsLoading(true);
 
     try {
       await signUp(email, password);
+      router.replace("/(auth)/setUpProfile");
     } catch (error) {
-      showAlert("Error", "Sign up failed!");
+      console.error("Error", error);
+      showAlert(
+        "Error",
+        error instanceof Error ? error.message : "Sign up failed!"
+      );
+    } finally {
+      setIsLoading(false);
     }
 
 
@@ -86,7 +109,9 @@ export default function SignUp() {
           />
 
           <TouchableOpacity style={styles.primaryButton} onPress={handleSignUp}>
-            <Text style={styles.primaryButtonText}>Sign Up</Text>
+            { isLoading ? <ActivityIndicator/> :
+                <Text style={styles.primaryButtonText}>Sign Up</Text>
+            }
           </TouchableOpacity>
 
           <TouchableOpacity
