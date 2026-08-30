@@ -1,6 +1,6 @@
 import { Button, Host } from "@expo/ui";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { PropsWithChildren, useState } from "react";
 import {
   KeyboardAvoidingView,
   ScrollView,
@@ -9,27 +9,33 @@ import {
   View
 } from "react-native";
 
-
-interface OnboardingData {
-  name: string;
-  goal: string;
-  workoutSplit: number;
-  experience: string;
+interface QuestionContainerProps extends PropsWithChildren {
+  badge?: string;
+  title: string;
+  subtitle?: string;
 }
 
-const INITIAL_DATA: OnboardingData = {
-  name: "",
-  goal: "Build Muscle",
-  workoutSplit: 4,
-  experience: "New",
-};
+export function QuestionContainerCard({
+  badge,
+  title,
+  subtitle,
+  children,
+}: QuestionContainerProps) {
+  return (
+    <View style={styles.questionCard}>
+      {badge ? <Text style={styles.questionBadge}>{badge}</Text> : null}
+
+      <Text style={styles.questionTitle}>{title}</Text>
+      {subtitle ? <Text style={styles.questionSubtitle}>{subtitle}</Text> : null}
+      <View style={styles.questionBody}>{children}</View>
+    </View>
+  );
+}
 
 
-
-export default function CreateUserPlan({name, goal, workoutSplit, experience}: OnboardingData) {
+export default function CreateUserPlan() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(1);
-  const [formData, setFormData] = useState<OnboardingData>(INITIAL_DATA);
 
 
   const TOTAL_QUESTIONS = 2;
@@ -52,20 +58,43 @@ export default function CreateUserPlan({name, goal, workoutSplit, experience}: O
     }
   }
 
+  const renderQuestionNumber = () => {
+    switch (currentStep) {
+      case 1:
+        return (
+            <View style={styles.content}>
+              <QuestionContainerCard
+                title="Experience"
+              >
+
+              </QuestionContainerCard>
+            </View>
+        );
+
+      case 2: 
+        return (
+          <View>
+            <Text>Hello</Text>
+          </View>
+        );
+      
+      default: 
+        return null;
+
+    };
+
+   
+  };
+
   return (
     <View style={styles.container}>
+      
       <KeyboardAvoidingView style={styles.keyboardView}>
-        <View style={styles.content}>
-          <Text style={styles.kicker}>Onboarding</Text>
-          <Text style={styles.title}>Create your plan</Text>
-          <Text style={styles.subtitle}>
-            A focused setup flow for goals, schedule, and experience level.
-          </Text>
-        </View>
 
-        <ScrollView>
-
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          {renderQuestionNumber()}
         </ScrollView>
+        
 
 
 
@@ -114,34 +143,72 @@ const styles = StyleSheet.create({
   keyboardView: {
     flex: 1,
   },
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingTop: 72,
+    paddingBottom: 32,
+  },
   content: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 24,
-    gap: 8,
+    width: "100%",
   },
-  kicker: {
+  questionCard: {
+    width: "100%",
+    maxWidth: 420,
+    minHeight: 360,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    paddingVertical: 32,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#dbe4ee",
+    backgroundColor: "#ffffff",
+    shadowColor: "#101828",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.1,
+    shadowRadius: 24,
+    elevation: 6,
+  },
+  questionBadge: {
+    alignSelf: "center",
+    marginBottom: 14,
+    overflow: "hidden",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#99f6e4",
     color: "#0f766e",
     fontSize: 13,
     fontWeight: "800",
     lineHeight: 18,
     textTransform: "uppercase",
   },
-  title: {
+  questionTitle: {
     color: "#172033",
     fontSize: 34,
     fontWeight: "900",
     lineHeight: 40,
     textAlign: "center",
   },
-  subtitle: {
+  questionSubtitle: {
     maxWidth: 320,
+    marginTop: 10,
     color: "#64748b",
     fontSize: 16,
     fontWeight: "600",
     lineHeight: 24,
     textAlign: "center",
+  },
+  questionBody: {
+    width: "100%",
+    marginTop: 28,
+    gap: 12,
   },
   footer: {
     width: "100%",

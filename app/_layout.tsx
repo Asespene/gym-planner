@@ -1,24 +1,49 @@
-import { Stack, useRouter } from "expo-router";
+import { Stack, useRouter, useSegments } from "expo-router";
 import { useEffect } from "react";
-import { AuthProvider } from "../src/context/AuthContext";
+import { AuthProvider, useAuth } from "../src/context/AuthContext";
 
-export default function RootLayout() {
-  let isAuth = false;
-
+function RouteGaurd() {
   const router = useRouter();
 
+  const { user, isLoadingSession } = useAuth();
+
+  const segments = useSegments();
+
+  //create segments to figure out which part of the app we are in
+  const inAuth = segments[0] === "(auth)";
+  const inTabs = segments[0] === "(tabs)";
+  const inOnboarding = segments[1] === "setUpProfile";
+
   useEffect(() => {
-    if (!isAuth) {
-      router.replace("/(auth)/login");
+    if (isLoadingSession) {
+      return;
     }
-    else {
+
+    if (!user) {
+      if (!inAuth || inOnboarding) {
+        router.replace("/(auth)/login");
+      }
+      return;
+    }
+
+    if (!user.onboardingCompleted) {
+      if (!inOnboarding) {
+        router.replace("/(auth)/setUpProfile");
+      }
+      return;
+    }
+
+    if (inAuth) {
       router.replace("/(tabs)");
     }
-  }, [isAuth, router])
+
+
+   
+  }, [user, inAuth, router, isLoadingSession, inOnboarding]);
+
 
   return (
-    <AuthProvider>
-      <Stack
+    <Stack
         screenOptions={{
           headerStyle: { backgroundColor: "#0f172a"},
           animation: "slide_from_right",
@@ -30,11 +55,11 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen 
-          name="(tabs)"
+          name="(auth)"
         />
 
         <Stack.Screen 
-          name="(auth)"
+          name="(tabs)"
         />
 
         <Stack.Screen
@@ -52,8 +77,16 @@ export default function RootLayout() {
             headerShown: true,
           }}
       />
-      </Stack>
+    </Stack>
+  );
+}
 
+export default function RootLayout() {
+  
+
+  return (
+    <AuthProvider>
+      <RouteGaurd />
     </AuthProvider>
   );
 }
