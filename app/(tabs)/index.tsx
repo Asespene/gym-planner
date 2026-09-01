@@ -1,61 +1,95 @@
-import { useRouter } from "expo-router";
-import { useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
-
 import { Button } from "@expo/ui";
-
-import CharacterSelectCard, {
-  CharacterItem,
-} from "../../components/CharacterSelectCard";
-
-import CreateCharacterCard from "../../components/CreateCharacterCard";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import BottomSheetComponent from "../../components/BottomSheet";
 
-
-
-const characterList: CharacterItem[] = [
-  {
-    id: "1",
-    title: "Xixak",
-    image: require("@/assets/images/react-logo.png"),
-  },
-  {
-    id: "2",
-    title: "Flame",
-    image: require("@/assets/images/react-logo.png"),
-  },
-
-  {
-    id: "3",
-    title: "Jol",
-    image: require("@/assets/images/react-logo.png"),
-  },
-
-  {
-    id: "4",
-    title: "Jin",
-    image: require("@/assets/images/react-logo.png"),
-  },
-];
+import CharacterSelectCard from "../../components/CharacterSelectCard";
+import CreateCharacterCard from "../../components/CreateCharacterCard";
+import {
+  Character,
+  deleteCharacter,
+  fetchAllCharacters,
+} from "../../lib/supabase/characters";
+import { useAuth } from "../../src/context/AuthContext";
 
 export default function Index() {
   const router = useRouter();
+  const { user } = useAuth();
+  const userId = user?.id;
 
-  const [initialCharacterList, setInitialCharacterList] = useState<CharacterItem[]>(characterList);
-  const [selectedCharacter, setSelectedCharacter] = useState<CharacterItem | null>(null)
+  const [characters, setCharacters] = useState<Character[]>([]);
+  const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const handleDeleteChar = (id: string) => {
-    setInitialCharacterList((prev) => prev.filter((char) => char.id !== id));
+  const loadCharacters = useCallback(
+    async (isRefresh = false) => {
+      if (!userId) {
+        return;
+      }
+
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      try {
+        const data = await fetchAllCharacters(userId);
+
+        setCharacters(data);
+      } catch {
+        Alert.alert("Error", "failed to load the characters");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [userId]
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      loadCharacters();
+    }, [loadCharacters])
+  );
+
+  const handleDeleteCharacter = async (id: string) => {
+    const previous = [...characters];
+
+    setCharacters((prev) => prev.filter((char) => char.id !== id));
     setSelectedCharacter(null);
-  }
 
+    try {
+      await deleteCharacter(id);
+    } catch {
+      setCharacters(previous);
+      Alert.alert("Failed to delete the character, try again!");
+    }
+  };
 
   return (
     <View style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => loadCharacters(true)}
+            tintColor="#0f766e"
+          />
+        }
       >
         <View style={styles.stack}>
           <View style={styles.header}>
@@ -67,40 +101,47 @@ export default function Index() {
           </View>
 
           <View style={styles.characterGrid}>
-            <CreateCharacterCard />
-
-            {initialCharacterList.map((character) => (
-              <CharacterSelectCard
-                key={character.id}
-                title={character.title}
-                image={character.image}
-                onPress={() =>
-                  router.push({
-                    pathname: "/characters/[id]",
-                    params: { id: character.id },
-                  })
-                }
-
-                onLongPress={() => setSelectedCharacter(character)}
+            {loading && !refreshing ? (
+              <ActivityIndicator
+                size="large"
+                color="#0f766e"
+                style={{ marginTop: 24 }}
               />
-            ))}
+            ) : (
+              <>
+                <CreateCharacterCard />
+                {characters.map((character) => (
+                  <CharacterSelectCard
+                    key={character.id}
+                    title={character.name}
+                    imageUrl={character.image_url}
+                    onPress={() => {
+                      router.push({
+                        pathname: "/characters/[id]",
+                        params: { id: character.id },
+                      });
+                    }}
+                    onLongPress={() => setSelectedCharacter(character)}
+                  />
+                ))}
+              </>
+            )}
           </View>
-          
+
           <BottomSheetComponent
             isPresented={selectedCharacter !== null}
             onDismiss={() => setSelectedCharacter(null)}
-            title={`Delete "${selectedCharacter?.title}"`}
+            title={`Delete "${selectedCharacter?.name}"`}
           >
             <Button
               label="Delete Character"
-              onPress={() => selectedCharacter ? handleDeleteChar(selectedCharacter.id) : null}
+              onPress={() =>
+                selectedCharacter
+                  ? handleDeleteCharacter(selectedCharacter.id)
+                  : null
+              }
             />
-              
-
           </BottomSheetComponent>
-
-
-          
         </View>
       </ScrollView>
     </View>
