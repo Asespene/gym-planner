@@ -1,31 +1,30 @@
 import {
   Image,
-  ImageSourcePropType,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 
+const DEFAULT_CHARACTER_IMAGE = require("@/assets/images/react-logo.png");
+
 interface CharacterProps {
   title: string;
-  image: ImageSourcePropType;
+  imageUrl?: string | null;
   onPress: () => void;
   onLongPress: () => void;
 }
 
-export interface CharacterItem {
-  id: string;
-  title: string;
-  image: ImageSourcePropType;
-}
 
 export default function CharacterSelectCard({
   title,
-  image,
+  imageUrl,
   onPress,
   onLongPress,
 }: CharacterProps) {
+
+  const imageSource = imageUrl ? { uri: imageUrl } : DEFAULT_CHARACTER_IMAGE;
+
   return (
     <Pressable
       style={({ pressed }) => [
@@ -37,7 +36,7 @@ export default function CharacterSelectCard({
       delayLongPress={500}
     >
       <View style={styles.imageShell}>
-        <Image source={image} resizeMode="contain" style={styles.characterImage} />
+        <Image source={imageSource} resizeMode="contain" style={styles.characterImage} />
       </View>
 
       <View style={styles.titleShell}>
