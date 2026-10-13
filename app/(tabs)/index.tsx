@@ -77,7 +77,7 @@ export default function Index() {
       Alert.alert("Failed to delete the character, try again!");
     }
   };
-
+  
   return (
     <View style={styles.container}>
       <ScrollView
