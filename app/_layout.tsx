@@ -77,6 +77,15 @@ function RouteGaurd() {
             headerShown: true,
           }}
       />
+
+        <Stack.Screen
+          name="characters/[id]/plan"
+          options={{
+            title: "Workout Plan",
+            headerShown: true,
+            headerBackTitle: "Back",
+          }}
+        />
     </Stack>
   );
 }

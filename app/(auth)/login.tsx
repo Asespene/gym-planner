@@ -73,6 +73,8 @@ export default function LogIn() {
                     value={email}
                     onChangeText={setEmail}
                 />
+            
+
 
                 <TextInput 
                     style={styles.input}
@@ -89,6 +91,7 @@ export default function LogIn() {
                 <TouchableOpacity
                     style={styles.primaryButton}
                     onPress={handleLogIn}
+                
                 >
                     {isLoading ? 
                     (<ActivityIndicator size={24} color="#fff"/>)
@@ -100,6 +103,7 @@ export default function LogIn() {
 
                 <TouchableOpacity
                     style={styles.secondaryButton}
+
                     onPress={() => router.push("/(auth)/signup")}
                 >
                     <Text style={styles.secondaryButtonText}>

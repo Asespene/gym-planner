@@ -1,14 +1,15 @@
-import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+import { Character, fetchCharacter } from "../../lib/supabase/characters";
+import { DayRoutineDetails, WorkoutPlan, fetchCurrentActiveWorkoutPlan, fetchCurrentDayRoutine } from "../../lib/supabase/workout_plans";
+
 
 // Mock Data for character
 const MockCharacterBioData = {
-  character: {
-    name: "Iron Vanguard",
-    goal: "Be as strong as hulk!",
-    training_days: 5,
-  },
+
 
   activePlan: {
     name: "Strength PPL - 5 Days",
@@ -73,15 +74,115 @@ export default function CharacterDetails() {
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const router = useRouter();
-  void id;
-  void router;
+
+  const [character, setCharacter] = useState<Character | null>(null);
+  const [workoutPlan, setWorkoutPlan] = useState<WorkoutPlan | null>(null);
+  const [todayRoutine, setTodayRoutine] = useState<DayRoutineDetails | null>(null);
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!id || Array.isArray(id)) { return }
+
+      let isMounted = true;
+
+      async function loadCharacter() {
+        try {
+          setIsLoading(true);
+          setError(null);
+
+          const characterData = await fetchCharacter(id as string);
+
+          if (!isMounted) { return; }
+
+          setCharacter(characterData);
+
+          const workoutPlanData = await fetchCurrentActiveWorkoutPlan(id as string);
+
+          if (!isMounted) { return; }
+
+          setWorkoutPlan(workoutPlanData);
+
+          if (workoutPlanData) {
+            const dayOfWeek = new Date().getDay();
+
+            const routineData = await fetchCurrentDayRoutine(workoutPlanData.id, dayOfWeek);
+
+            if (!isMounted) { return; }
+
+            setTodayRoutine(routineData);
+          } else {
+            setTodayRoutine(null);
+          }
+        } catch (err) {
+          if (isMounted) {
+            console.error("Error in loading the character", err);
+            setError("Failed to load the character");
+          }
+        } finally {
+          if (isMounted) { setIsLoading(false); }
+        }
+      }
+      loadCharacter();
+
+      return () => {
+        isMounted = false;
+      }
+  }, [id]));
+
+
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={[styles.safeArea, { justifyContent: "center", alignItems: "center"}]} >
+        <ActivityIndicator size="large" color="#0f766e" />
+      </SafeAreaView> 
+    );
+  }
+
+  if (error || !character) {
+    return (
+      <SafeAreaView style={[styles.safeArea, { justifyContent: "center", alignItems: "center", padding: 20 }]}>
+       <Text style={{ fontSize: 16, fontWeight: "700", color: "#64748b" }}>
+          {error || "Character not found."}
+        </Text>
+      </SafeAreaView>
+    );
+  }
+  // this is the main button to start the current split for today or create a new plan if there is none
+  const handlePrimaryAction = () => {
+    if (!workoutPlan) {
+      router.push({
+        pathname: "/characters/create_workout_plan",
+        params: { characterId: id },
+      });
+      return;
+    }
+
+    if (!todayRoutine) {
+      router.push(`/characters/${id}/plan`);
+      return;
+    }
+
+    if (todayRoutine?.isRestDay || !todayRoutine?.routine) {
+      alert("Today is a rest day!");
+      return;
+    }
+
+    if (todayRoutine?.routine) {
+      router.push(`/sessions/${todayRoutine.routine.id}`);
+    }
+  }
+
 
   return (
     // A Safe area View
     <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
       <Stack.Screen
         options={{
-          title: MockCharacterBioData.character.name,
+          title: character.name,
           headerBackTitle: "Back",
         }}
       />
@@ -101,19 +202,19 @@ export default function CharacterDetails() {
               <View style={styles.bioGroup}>
                 <Text style={styles.bioLabel}>Name</Text>
                 <Text style={styles.bioValue}>
-                  {MockCharacterBioData.character.name}
+                  {character.name}
                 </Text>
               </View>
               <View style={styles.bioGroup}>
                 <Text style={styles.bioLabel}>Goal</Text>
                 <Text style={styles.bioValue}>
-                  {MockCharacterBioData.character.goal}
+                  {character.goal ?? "No goal set!"}
                 </Text>
               </View>
               <View style={[styles.bioGroup, { borderBottomWidth: 0 }]}>
                 <Text style={styles.bioLabel}>Training Days</Text>
                 <Text style={styles.bioValue}>
-                  {MockCharacterBioData.character.training_days} days/week
+                  {character.training_days} days/week
                 </Text>
               </View>
             </View>
@@ -158,11 +259,13 @@ export default function CharacterDetails() {
           </View>
 
           {/* The middle section which contains the primary action button with the Start "routine_dat" */}
-          <TouchableOpacity style={styles.ctaSection} activeOpacity={0.8}>
+          <TouchableOpacity style={styles.ctaSection} activeOpacity={0.8} onPress={handlePrimaryAction}>
               <View style={styles.ctaCopy}>
-                <Text style={styles.ctaLabel}>Today&apos;s Routine</Text>
+                <Text style={styles.ctaLabel}>
+                  {todayRoutine?.isRestDay ? "Recovery" : todayRoutine ? "Today's Routine" : "Setup"}
+                </Text>
                 <Text style={styles.ctaTitle}>
-                  Start &quot;{MockCharacterBioData.todayRoutine.name}&quot;
+                  {todayRoutine ? todayRoutine.isRestDay || !todayRoutine.routine ? "Rest Day" : `Start "${todayRoutine.routine?.name}"` : workoutPlan ? "Configure Your Plan" : "Create a Workout Plan"}
                 </Text>
               </View>    
           </TouchableOpacity>
@@ -173,9 +276,24 @@ export default function CharacterDetails() {
             
             <View style={styles.actionGrid}>
 
-              <TouchableOpacity style={styles.actionTile}>
+              <TouchableOpacity
+                style={styles.actionTile}
+                activeOpacity={0.7}
+                onPress={() => {
+                  if (workoutPlan) {
+                    router.push(`/characters/${id}/plan`);
+                  } else {
+                    router.push({
+                      pathname: "/characters/create_workout_plan",
+                      params: { characterId: id},
+                    });
+                  }
+                }}
+                >
                 <Text style={styles.actionTitle}>Plan</Text>
-                <Text style={styles.actionMeta}>Edit or review</Text>
+                <Text style={styles.actionMeta}>
+                  { workoutPlan ? workoutPlan.name : "No active plan" }
+                </Text>
               </TouchableOpacity>
               
               <TouchableOpacity style={styles.actionTile}>
@@ -204,6 +322,7 @@ export default function CharacterDetails() {
     </SafeAreaView>
   );
 }
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
