@@ -1,10 +1,35 @@
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Character, fetchCharacter } from "../../lib/supabase/characters";
-import { DayRoutineDetails, WorkoutPlan, fetchCurrentActiveWorkoutPlan, fetchCurrentDayRoutine } from "../../lib/supabase/workout_plans";
+import {
+  DayRoutineDetails,
+  fetchCurrentActiveWorkoutPlan,
+  fetchCurrentDayRoutine,
+  fetchPlanDashboardData,
+  PlannedExercise,
+  Routine,
+  WorkoutPlan,
+} from "../../lib/supabase/workout_plans";
+import {
+  ActiveSessionDetails,
+  createActiveWorkoutSession,
+  fetchLatestCompletedSessionToday,
+  fetchOpenWorkoutSession,
+  LatestCompletedSessionSummary,
+} from "../../lib/supabase/workout_sessions";
 
 
 // Mock Data for character
@@ -72,15 +97,31 @@ const mockCharacterStatsData = {
 
 export default function CharacterDetails() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const characterId = Array.isArray(id) ? id[0] : id;
 
   const router = useRouter();
 
   const [character, setCharacter] = useState<Character | null>(null);
   const [workoutPlan, setWorkoutPlan] = useState<WorkoutPlan | null>(null);
   const [todayRoutine, setTodayRoutine] = useState<DayRoutineDetails | null>(null);
+  const [inProgressSession, setInProgressSession] = useState<ActiveSessionDetails | null>(null);
+  const [latestCompletedToday, setLatestCompletedToday] =
+    useState<LatestCompletedSessionSummary | null>(null);
 
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isStartConfirmOpen, setIsStartConfirmOpen] = useState(false);
+  const [isStartingWorkout, setIsStartingWorkout] = useState(false);
+  const [isChooserOpen, setIsChooserOpen] = useState(false);
+  const [availableRoutines, setAvailableRoutines] = useState<
+    (Routine & { planned_exercises: PlannedExercise[] })[]
+  >([]);
+  const [isLoadingRoutines, setIsLoadingRoutines] = useState(false);
+  const [chooserError, setChooserError] = useState<string | null>(null);
+  const [pendingRoutine, setPendingRoutine] = useState<
+    (Routine & { planned_exercises: PlannedExercise[] }) | null
+  >(null);
+  const [pendingRoutineDayId, setPendingRoutineDayId] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -98,6 +139,14 @@ export default function CharacterDetails() {
           if (!isMounted) { return; }
 
           setCharacter(characterData);
+
+          const [openSession, completedSession] = await Promise.all([
+            fetchOpenWorkoutSession(id),
+            fetchLatestCompletedSessionToday(id),
+          ]);
+          if (!isMounted) { return; }
+          setInProgressSession(openSession);
+          setLatestCompletedToday(completedSession);
 
           const workoutPlanData = await fetchCurrentActiveWorkoutPlan(id as string);
 
@@ -151,7 +200,24 @@ export default function CharacterDetails() {
       </SafeAreaView>
     );
   }
-  // this is the main button to start the current split for today or create a new plan if there is none
+  async function openRoutineChooser() {
+    if (!characterId || !workoutPlan?.id || isLoadingRoutines) {
+      return;
+    }
+    setChooserError(null);
+    setIsChooserOpen(true);
+    try {
+      setIsLoadingRoutines(true);
+      const dashboard = await fetchPlanDashboardData(characterId, workoutPlan.id);
+      setAvailableRoutines(dashboard?.routines ?? []);
+    } catch (err) {
+      console.error("Failed to load routines for workout:", err);
+      setChooserError(err instanceof Error ? err.message : "Could not load routines.");
+    } finally {
+      setIsLoadingRoutines(false);
+    }
+  }
+
   const handlePrimaryAction = () => {
     if (!workoutPlan) {
       router.push({
@@ -161,21 +227,62 @@ export default function CharacterDetails() {
       return;
     }
 
-    if (!todayRoutine) {
-      router.push(`/characters/${id}/plan`);
+    if (!todayRoutine?.routine || todayRoutine.isRestDay) {
+      void openRoutineChooser();
       return;
     }
 
-    if (todayRoutine?.isRestDay || !todayRoutine?.routine) {
-      alert("Today is a rest day!");
-      return;
-    }
-
-    if (todayRoutine?.routine) {
-      router.push(`/sessions/${todayRoutine.routine.id}`);
-    }
+    setPendingRoutine(todayRoutine.routine);
+    setPendingRoutineDayId(todayRoutine.routine_day_id);
+    setIsStartConfirmOpen(true);
   }
 
+  function handleSelectRoutine(routine: Routine & { planned_exercises: PlannedExercise[] }) {
+    setIsChooserOpen(false);
+    setPendingRoutine(routine);
+    setPendingRoutineDayId(null);
+    setIsStartConfirmOpen(true);
+  }
+
+  const handleConfirmStart = async () => {
+    if (!pendingRoutine || !characterId || isStartingWorkout) {
+      return;
+    }
+
+    setIsStartingWorkout(true);
+    try {
+      const sessionId = await createActiveWorkoutSession({
+        characterId,
+        routineId: pendingRoutine.id,
+        routineDayId: pendingRoutineDayId,
+        routineNameSnapshot: pendingRoutine.name,
+      });
+      setIsStartConfirmOpen(false);
+      router.push({
+        pathname: "/sessions/active",
+        params: {
+          characterId,
+          sessionId,
+          routineId: pendingRoutine.id,
+          routineDayId: pendingRoutineDayId ?? "",
+          routineName: pendingRoutine.name,
+        },
+      });
+    } catch (err) {
+      console.error("Failed to start workout:", err);
+      const message = err instanceof Error ? err.message : "Could not start workout.";
+      if (Platform.OS === "web") {
+        window.alert(message);
+      } else {
+        Alert.alert("Start Failed", message);
+      }
+    } finally {
+      setIsStartingWorkout(false);
+    }
+  };
+
+  const isStartingCompletedRoutineAgain =
+    pendingRoutine?.name === latestCompletedToday?.routine_name_snapshot;
 
   return (
     // A Safe area View
@@ -258,17 +365,80 @@ export default function CharacterDetails() {
             </View>
           </View>
 
-          {/* The middle section which contains the primary action button with the Start "routine_dat" */}
-          <TouchableOpacity style={styles.ctaSection} activeOpacity={0.8} onPress={handlePrimaryAction}>
+          {inProgressSession ? (
+            <TouchableOpacity
+              style={[styles.ctaSection, styles.resumeCard]}
+              activeOpacity={0.8}
+              onPress={() =>
+                router.push({
+                  pathname: "/sessions/active",
+                  params: {
+                    characterId: Array.isArray(id) ? id[0] : id,
+                    sessionId: inProgressSession.id,
+                    routineId: inProgressSession.routine_id ?? "",
+                    routineDayId: inProgressSession.routine_day_id ?? "",
+                    routineName: inProgressSession.routine_name_snapshot,
+                  },
+                })
+              }
+            >
+              <View style={styles.ctaCopy}>
+                <Text style={styles.ctaLabel}>WORKOUT IN PROGRESS</Text>
+                <Text style={styles.ctaTitle}>
+                  Resume &quot;{inProgressSession.routine_name_snapshot}&quot;
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ) : latestCompletedToday ? (
+            <View style={styles.completedWrapper}>
+              <TouchableOpacity
+                style={[styles.ctaSection, styles.completedCard]}
+                activeOpacity={0.8}
+                onPress={() => router.push(`/characters/${id}/history`)}
+              >
+                <View style={styles.ctaCopy}>
+                  <Text style={styles.completedOverline}>TODAY&apos;S WORKOUT COMPLETE ✓</Text>
+                  <Text style={styles.completedTitle}>
+                    {latestCompletedToday.routine_name_snapshot}
+                  </Text>
+                  <Text style={styles.completedMeta}>
+                    {latestCompletedToday.total_sets} sets · {latestCompletedToday.duration_minutes} min
+                  </Text>
+                  <Text style={styles.viewWorkoutText}>View Workout</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondaryActionButton}
+                onPress={() => void openRoutineChooser()}
+                accessibilityRole="button"
+              >
+                <Text style={styles.secondaryActionText}>Log Another Workout</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.ctaSection}
+              activeOpacity={0.8}
+              onPress={handlePrimaryAction}
+            >
               <View style={styles.ctaCopy}>
                 <Text style={styles.ctaLabel}>
-                  {todayRoutine?.isRestDay ? "Recovery" : todayRoutine ? "Today's Routine" : "Setup"}
+                  {todayRoutine?.isRestDay
+                    ? "Recovery"
+                    : todayRoutine?.routine
+                      ? "Today's Routine"
+                      : "Workout"}
                 </Text>
                 <Text style={styles.ctaTitle}>
-                  {todayRoutine ? todayRoutine.isRestDay || !todayRoutine.routine ? "Rest Day" : `Start "${todayRoutine.routine?.name}"` : workoutPlan ? "Configure Your Plan" : "Create a Workout Plan"}
+                  {!workoutPlan
+                    ? "Create a Workout Plan"
+                    : todayRoutine?.routine && !todayRoutine.isRestDay
+                      ? `Start "${todayRoutine.routine.name}"`
+                      : "Start a Workout"}
                 </Text>
-              </View>    
-          </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+          )}
          
 
           {/* The Action grid section for the buttons; edit/start the plan, workout-history, character-stats-exp, and tbd button  */}
@@ -296,7 +466,11 @@ export default function CharacterDetails() {
                 </Text>
               </TouchableOpacity>
               
-              <TouchableOpacity style={styles.actionTile}>
+              <TouchableOpacity
+                style={styles.actionTile}
+                activeOpacity={0.7}
+                onPress={() => router.push(`/characters/${id}/history`)}
+              >
                 <Text style={styles.actionTitle}>History</Text>
                 <Text style={styles.actionMeta}>
                   {mockCharacterStatsData.overview.workoutsCompleted} workouts
@@ -319,6 +493,110 @@ export default function CharacterDetails() {
           </View>
         </ScrollView>
       </View>
+
+      <Modal
+        visible={isChooserOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!isLoadingRoutines) {
+            setIsChooserOpen(false);
+          }
+        }}
+      >
+        <View style={styles.confirmModalOverlay}>
+          <View style={styles.chooserModalCard}>
+            <Text style={styles.confirmModalTitle}>Choose a Routine</Text>
+            <Text style={styles.confirmModalMessage}>Select a routine to begin your workout.</Text>
+
+            {isLoadingRoutines ? (
+              <ActivityIndicator size="small" color="#0f766e" />
+            ) : chooserError ? (
+              <Text style={styles.chooserError}>{chooserError}</Text>
+            ) : availableRoutines.length > 0 ? (
+              <ScrollView style={styles.routinesList}>
+                {availableRoutines.map((routine) => (
+                  <TouchableOpacity
+                    key={routine.id}
+                    style={styles.routineOption}
+                    onPress={() => handleSelectRoutine(routine)}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.routineOptionName}>{routine.name}</Text>
+                    {routine.description ? (
+                      <Text style={styles.routineOptionDescription}>{routine.description}</Text>
+                    ) : null}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.chooserError}>No routines are available in this plan.</Text>
+            )}
+
+            <TouchableOpacity
+              style={[styles.confirmButton, styles.confirmCancelBtn]}
+              onPress={() => setIsChooserOpen(false)}
+              disabled={isLoadingRoutines}
+              accessibilityRole="button"
+            >
+              <Text style={styles.confirmCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isStartConfirmOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!isStartingWorkout) {
+            setIsStartConfirmOpen(false);
+          }
+        }}
+      >
+        <View style={styles.confirmModalOverlay}>
+          <View style={styles.confirmModalCard}>
+            <Text style={styles.confirmModalTitle}>
+              {isStartingCompletedRoutineAgain
+                ? "Begin Another Workout?"
+                : `Start ${pendingRoutine?.name || "Workout"}?`}
+            </Text>
+
+            <Text style={styles.confirmModalMessage}>
+              {pendingRoutine?.planned_exercises?.length || 0} exercises planned.
+              {"\n\n"}
+              {isStartingCompletedRoutineAgain
+                ? `You completed ${pendingRoutine?.name} today. Start another session?`
+                : "Your session and workout timer will begin once you confirm."}
+            </Text>
+
+            <View style={styles.confirmModalActions}>
+              <TouchableOpacity
+                style={[styles.confirmButton, styles.confirmCancelBtn]}
+                onPress={() => setIsStartConfirmOpen(false)}
+                disabled={isStartingWorkout}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+              >
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.confirmButton, styles.confirmStartBtn]}
+                onPress={() => void handleConfirmStart()}
+                activeOpacity={0.7}
+                disabled={isStartingWorkout}
+                accessibilityRole="button"
+              >
+                <Text style={styles.confirmStartText}>
+                  {isStartingWorkout ? "Starting..." : "Begin Workout"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -478,6 +756,48 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     lineHeight: 28,
   },
+  resumeCard: {
+    backgroundColor: "#065f46",
+  },
+  completedWrapper: {
+    gap: 8,
+  },
+  completedCard: {
+    backgroundColor: "#ffffff",
+    borderWidth: 1.5,
+    borderColor: "#059669",
+  },
+  completedOverline: {
+    color: "#059669",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  completedTitle: {
+    color: "#172033",
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  completedMeta: {
+    color: "#64748b",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  viewWorkoutText: {
+    color: "#047857",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  secondaryActionButton: {
+    alignSelf: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  secondaryActionText: {
+    color: "#0f766e",
+    fontSize: 14,
+    fontWeight: "700",
+  },
   
   gridSection: {
     backgroundColor: "#ffffff",
@@ -528,5 +848,102 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 16,
   },
-  
+  confirmModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.55)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  confirmModalCard: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    padding: 22,
+    gap: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  chooserModalCard: {
+    width: "100%",
+    maxWidth: 380,
+    maxHeight: "80%",
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    padding: 22,
+    gap: 12,
+  },
+  routinesList: {
+    flexGrow: 0,
+    maxHeight: 300,
+  },
+  routineOption: {
+    padding: 12,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  routineOptionName: {
+    color: "#172033",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  routineOptionDescription: {
+    color: "#64748b",
+    fontSize: 12,
+    marginTop: 2,
+  },
+  chooserError: {
+    color: "#b91c1c",
+    fontSize: 13,
+    textAlign: "center",
+  },
+  confirmModalTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#172033",
+    textAlign: "center",
+  },
+  confirmModalMessage: {
+    fontSize: 14,
+    color: "#64748b",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  confirmModalActions: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 8,
+  },
+  confirmButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  confirmCancelBtn: {
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  confirmCancelText: {
+    color: "#475569",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  confirmStartBtn: {
+    backgroundColor: "#0f766e",
+  },
+  confirmStartText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "700",
+  },
 });

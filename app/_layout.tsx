@@ -86,6 +86,34 @@ function RouteGaurd() {
             headerBackTitle: "Back",
           }}
         />
+
+        <Stack.Screen
+          name="characters/[id]/history"
+          options={{
+            title: "Workout History",
+            headerShown: true,
+            headerBackTitle: "Back",
+          }}
+        />
+
+        <Stack.Screen
+          name="sessions/[id]"
+          options={{
+            headerShown: false,
+            headerBackVisible: false,
+            gestureEnabled: false,
+          }}
+        />
+
+        <Stack.Screen
+          name="sessions/active"
+          options={{
+            headerShown: true,
+            title: "Live Workout",
+            headerBackVisible: false,
+            gestureEnabled: false,
+          }}
+        />
     </Stack>
   );
 }
