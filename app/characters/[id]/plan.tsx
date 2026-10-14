@@ -2,7 +2,6 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
     ActivityIndicator,
-    Alert,
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -17,8 +16,10 @@ import {
 import {
     createPlannedExercise,
     createRoutine,
+    deletePlannedExercise,
     fetchPlanDashboardData,
     PlanDashboardData,
+    PlannedExercise,
     Routine,
     updateRoutineDayAssignment,
 } from "../../../lib/supabase/workout_plans";
@@ -36,6 +37,7 @@ const DAYS_OF_WEEK = [
 
 export default function PlanDashBoard() {
     const [dashboardData, setDashboardData] = useState<PlanDashboardData | null>(null);
+    const [activeDayIndex, setActiveDayIndex] = useState<number>(() => new Date().getDay());
 
     const [isLoading, setIsLoading] = useState(true);
 
@@ -53,23 +55,31 @@ export default function PlanDashBoard() {
     } | null>(null);
     const [isAssigningDay, setIsAssigningDay] = useState(false);
     const [assignmentError, setAssignmentError] = useState<string | null>(null);
-    const [selectedRoutineForExercise, setSelectedRoutineForExercise] = useState<{
-        routineId: string;
-        routineDayId: string;
-        routineName: string;
-    } | null>(null);
+    const [editingRoutine, setEditingRoutine] = useState<
+        (Routine & { planned_exercises: PlannedExercise[] }) | null
+    >(null);
+    const [isAddingExerciseInline, setIsAddingExerciseInline] = useState(false);
     const [exerciseName, setExerciseName] = useState("");
     const [targetSets, setTargetSets] = useState("3");
     const [minReps, setMinReps] = useState("8");
     const [maxReps, setMaxReps] = useState("12");
     const [isSubmittingExercise, setIsSubmittingExercise] = useState(false);
     const [exerciseError, setExerciseError] = useState<string | null>(null);
+    const [deletingExerciseId, setDeletingExerciseId] = useState<string | null>(null);
 
     const { id, planId } = useLocalSearchParams<{ id: string, planId?: string }>();
     const router = useRouter(); 
 
     const characterId = Array.isArray(id) ? id[0] : id;
     const targetPlanId = Array.isArray(planId) ? planId[0] : planId;
+
+    const handlePrevDay = () => {
+        setActiveDayIndex((previous) => (previous === 0 ? 6 : previous - 1));
+    };
+
+    const handleNextDay = () => {
+        setActiveDayIndex((previous) => (previous === 6 ? 0 : previous + 1));
+    };
 
     const loadPlan = useCallback(async (showLoading = true) => {
         if (!characterId) {
@@ -152,29 +162,52 @@ export default function PlanDashBoard() {
         }
     }
 
-    function handleOpenAddExercise(routine: Routine) {
-        const assignedDay = dashboardData?.scheduleDays.find((day) => day.routineId === routine.id);
+    function handleOpenEditRoutine(routine: Routine & { planned_exercises: PlannedExercise[] }) {
+        setExerciseError(null);
+        setIsAddingExerciseInline(false);
+        setExerciseName("");
+        setTargetSets("3");
+        setMinReps("8");
+        setMaxReps("12");
+        setEditingRoutine(routine);
+    }
 
-        if (!assignedDay) {
-            const message = `Please assign "${routine.name}" to at least one day in the Weekly Schedule first.`;
-            if (Platform.OS === "web") {
-                window.alert(message);
-            } else {
-                Alert.alert("Assign a schedule day", message);
-            }
+    async function handleDeleteExercise(exerciseId: string) {
+        if (!editingRoutine || deletingExerciseId) {
             return;
         }
 
-        setExerciseError(null);
-        setSelectedRoutineForExercise({
-            routineId: routine.id,
-            routineDayId: assignedDay.id,
-            routineName: routine.name,
-        });
+        try {
+            setDeletingExerciseId(exerciseId);
+            setExerciseError(null);
+            await deletePlannedExercise(exerciseId);
+            setEditingRoutine((previous) =>
+                previous
+                    ? {
+                        ...previous,
+                        planned_exercises: previous.planned_exercises.filter(
+                            (exercise) => exercise.id !== exerciseId
+                        ),
+                    }
+                    : previous
+            );
+            await loadPlan(false);
+        } catch (err) {
+            console.error("Error deleting planned exercise:", err);
+            setExerciseError(err instanceof Error ? err.message : "Failed to delete exercise.");
+        } finally {
+            setDeletingExerciseId(null);
+        }
     }
 
-    async function handleCreateExercise() {
-        if (!selectedRoutineForExercise || !exerciseName.trim() || isSubmittingExercise) {
+    async function handleCreateExerciseInline() {
+        if (!editingRoutine || !exerciseName.trim() || isSubmittingExercise) {
+            return;
+        }
+
+        const assignedDay = scheduleDays.find((day) => day.routineId === editingRoutine.id);
+        if (!assignedDay) {
+            setExerciseError("Assign this routine to a schedule day before adding exercises.");
             return;
         }
 
@@ -191,23 +224,33 @@ export default function PlanDashBoard() {
         try {
             setIsSubmittingExercise(true);
             setExerciseError(null);
-            await createPlannedExercise({
-                routine_day_id: selectedRoutineForExercise.routineDayId,
-                routine_id: selectedRoutineForExercise.routineId,
+            const nextOrderIndex = editingRoutine.planned_exercises.reduce(
+                (highest, exercise) => Math.max(highest, exercise.order_index),
+                -1
+            ) + 1;
+            const newExercise = await createPlannedExercise({
+                routine_day_id: assignedDay.id,
+                routine_id: editingRoutine.id,
                 exercise_name: exerciseName.trim(),
                 target_sets: sets,
                 min_reps: min,
                 max_reps: max,
-                order_index: dashboardData?.routines.find(
-                    (routine) => routine.id === selectedRoutineForExercise.routineId
-                )?.planned_exercises.length ?? 0,
+                order_index: nextOrderIndex,
             });
 
+            setEditingRoutine((previous) =>
+                previous && previous.id === editingRoutine.id
+                    ? {
+                        ...previous,
+                        planned_exercises: [...previous.planned_exercises, newExercise],
+                    }
+                    : previous
+            );
             setExerciseName("");
             setTargetSets("3");
             setMinReps("8");
             setMaxReps("12");
-            setSelectedRoutineForExercise(null);
+            setIsAddingExerciseInline(false);
             await loadPlan(false);
         } catch (err) {
             console.error("Error creating planned exercise:", err);
@@ -299,32 +342,92 @@ export default function PlanDashBoard() {
             </View>
 
 
-            {/* Schedule */}
+            {/* Weekly Schedule Single-Day Carousel */}
             <View style={styles.scheduleSection}>
-                <Text style={styles.sectionTitle}>Weekly Schedule</Text>
+                <View style={styles.scheduleHeaderRow}>
+                    <Text style={styles.sectionTitle}>Weekly Schedule</Text>
+                    <Text style={styles.scheduleCounter}>Day {activeDayIndex + 1} of 7</Text>
+                </View>
 
                 {scheduleDays.length === 0 ? (
                     <View style={styles.emptySchedule}>
                         <Text style={styles.stateMessage}>No schedule configured yet!</Text>
                     </View>
                 ) : (
-                    scheduleDays.map((day) => (
-                        <TouchableOpacity
-                            key={day.id || day.dayOfWeek}
-                            style={styles.dayCard}
-                            onPress={() => {
-                                setAssignmentError(null);
-                                setSelectedDayForAssignment(day);
-                            }}
-                        >
-                            <Text style={styles.dayName}>{DAYS_OF_WEEK[day.dayOfWeek]}</Text>
-                            <Text style={styles.dayRoutine}>
-                                {day.isRest ? "Rest Day" : day.routineName || "Unassigned"}
-                            </Text>
-                        </TouchableOpacity>
-                    ))
+                    (() => {
+                        const currentDay = scheduleDays.find(
+                            (day) => day.dayOfWeek === activeDayIndex
+                        );
+                        const isToday = new Date().getDay() === activeDayIndex;
+
+                        return (
+                            <View style={styles.carouselContainer}>
+                                <TouchableOpacity
+                                    style={styles.arrowButton}
+                                    onPress={handlePrevDay}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Previous day"
+                                >
+                                    <Text style={styles.arrowText}>‹</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={[
+                                        styles.singleDayCard,
+                                        isToday && styles.singleDayCardToday,
+                                    ]}
+                                    activeOpacity={0.7}
+                                    disabled={!currentDay}
+                                    onPress={() => {
+                                        if (currentDay) {
+                                            setAssignmentError(null);
+                                            setSelectedDayForAssignment(currentDay);
+                                        }
+                                    }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Edit ${DAYS_OF_WEEK[activeDayIndex]} assignment`}
+                                >
+                                    <View style={styles.dayBadgeRow}>
+                                        {isToday ? (
+                                            <View style={styles.todayIndicator}>
+                                                <Text style={styles.todayIndicatorText}>TODAY</Text>
+                                            </View>
+                                        ) : null}
+                                        <Text style={styles.tapToEditHint}>Tap to change</Text>
+                                    </View>
+
+                                    <Text style={styles.singleDayName}>
+                                        {DAYS_OF_WEEK[activeDayIndex]}
+                                    </Text>
+
+                                    <View style={styles.routineDisplayBox}>
+                                        <Text
+                                            style={[
+                                                styles.singleDayRoutine,
+                                                currentDay?.isRest && styles.restRoutineText,
+                                            ]}
+                                        >
+                                            {currentDay
+                                                ? currentDay.isRest
+                                                    ? "Rest Day"
+                                                    : currentDay.routineName || "Unassigned"
+                                                : "Unassigned"}
+                                        </Text>
+                                    </View>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={styles.arrowButton}
+                                    onPress={handleNextDay}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Next day"
+                                >
+                                    <Text style={styles.arrowText}>›</Text>
+                                </TouchableOpacity>
+                            </View>
+                        );
+                    })()
                 )}
-            
             </View>
 
             {/* Routines & Planned Exercises */}
@@ -357,10 +460,10 @@ export default function PlanDashBoard() {
                                     ) : null}
                                 </View>
                                 <TouchableOpacity
-                                    style={styles.addExerciseButton}
-                                    onPress={() => handleOpenAddExercise(routine)}
+                                    style={styles.editRoutineButton}
+                                    onPress={() => handleOpenEditRoutine(routine)}
                                 >
-                                    <Text style={styles.addExerciseButtonText}>+ Add Exercise</Text>
+                                    <Text style={styles.editRoutineButtonText}>Edit</Text>
                                 </TouchableOpacity>
                             </View>
 
@@ -456,92 +559,157 @@ export default function PlanDashBoard() {
             </Modal>
 
             <Modal
-                visible={selectedRoutineForExercise !== null}
-                animationType="fade"
+                visible={editingRoutine !== null}
+                animationType="slide"
                 transparent
                 onRequestClose={() => {
-                    if (!isSubmittingExercise) {
-                        setSelectedRoutineForExercise(null);
+                    if (!isSubmittingExercise && !deletingExerciseId) {
+                        setEditingRoutine(null);
+                        setIsAddingExerciseInline(false);
                     }
                 }}
             >
                 <KeyboardAvoidingView
                     behavior={Platform.OS === "ios" ? "padding" : "height"}
-                    style={styles.modalOverlay}
+                    style={styles.routineEditorOverlay}
                 >
-                    <View style={styles.modalContent}>
-                        <Text style={styles.modalTitle}>
-                            Add Exercise to {selectedRoutineForExercise?.routineName}
-                        </Text>
-
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Exercise name (e.g. Incline DB Press)"
-                            placeholderTextColor="#94a3b8"
-                            value={exerciseName}
-                            onChangeText={setExerciseName}
-                            autoFocus
-                        />
-
-                        <View style={styles.numInputsRow}>
-                            <View style={styles.numInputGroup}>
-                                <Text style={styles.inputLabel}>Sets</Text>
-                                <TextInput
-                                    style={styles.input}
-                                    keyboardType="number-pad"
-                                    value={targetSets}
-                                    onChangeText={setTargetSets}
-                                />
+                    <View style={styles.modalSheetContent}>
+                        <View style={styles.sheetHeader}>
+                            <View style={styles.sheetHeadingCopy}>
+                                <Text style={styles.sheetTitle}>{editingRoutine?.name}</Text>
+                                <Text style={styles.sheetSubtitle}>Manage routine movements</Text>
                             </View>
-                            <View style={styles.numInputGroup}>
-                                <Text style={styles.inputLabel}>Min Reps</Text>
-                                <TextInput
-                                    style={styles.input}
-                                    keyboardType="number-pad"
-                                    value={minReps}
-                                    onChangeText={setMinReps}
-                                />
-                            </View>
-                            <View style={styles.numInputGroup}>
-                                <Text style={styles.inputLabel}>Max Reps</Text>
-                                <TextInput
-                                    style={styles.input}
-                                    keyboardType="number-pad"
-                                    value={maxReps}
-                                    onChangeText={setMaxReps}
-                                />
-                            </View>
-                        </View>
-
-                        {exerciseError ? (
-                            <Text style={styles.routineError}>{exerciseError}</Text>
-                        ) : null}
-
-                        <View style={styles.modalButtonRow}>
                             <TouchableOpacity
-                                style={[styles.modalButton, styles.cancelButton]}
+                                style={styles.closeSheetButton}
                                 onPress={() => {
-                                    setSelectedRoutineForExercise(null);
-                                    setExerciseError(null);
+                                    setEditingRoutine(null);
+                                    setIsAddingExerciseInline(false);
                                 }}
-                                disabled={isSubmittingExercise}
+                                disabled={isSubmittingExercise || deletingExerciseId !== null}
+                                accessibilityRole="button"
+                                accessibilityLabel="Done managing routine"
                             >
-                                <Text style={styles.cancelButtonText}>Cancel</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[
-                                    styles.modalButton,
-                                    styles.submitButton,
-                                    (!exerciseName.trim() || isSubmittingExercise) && styles.disabledButton,
-                                ]}
-                                onPress={handleCreateExercise}
-                                disabled={!exerciseName.trim() || isSubmittingExercise}
-                            >
-                                <Text style={styles.submitButtonText}>
-                                    {isSubmittingExercise ? "Adding..." : "Add Exercise"}
-                                </Text>
+                                <Text style={styles.closeSheetButtonText}>Done</Text>
                             </TouchableOpacity>
                         </View>
+
+                        <ScrollView
+                            style={styles.routineEditorScroll}
+                            contentContainerStyle={styles.routineEditorContent}
+                            keyboardShouldPersistTaps="handled"
+                        >
+                            {!isAddingExerciseInline ? (
+                                <TouchableOpacity
+                                    style={styles.openAddExerciseBar}
+                                    onPress={() => {
+                                        setExerciseError(null);
+                                        setIsAddingExerciseInline(true);
+                                    }}
+                                    accessibilityRole="button"
+                                >
+                                    <Text style={styles.openAddExerciseBarText}>+ Add New Exercise</Text>
+                                </TouchableOpacity>
+                            ) : (
+                                <View style={styles.inlineFormCard}>
+                                    <Text style={styles.formHeading}>New Exercise</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Exercise name (e.g. Incline DB Press)"
+                                        placeholderTextColor="#94a3b8"
+                                        value={exerciseName}
+                                        onChangeText={setExerciseName}
+                                        autoFocus
+                                    />
+
+                                    <View style={styles.numInputsRow}>
+                                        <View style={styles.numInputGroup}>
+                                            <Text style={styles.inputLabel}>Sets</Text>
+                                            <TextInput
+                                                style={styles.input}
+                                                keyboardType="number-pad"
+                                                value={targetSets}
+                                                onChangeText={setTargetSets}
+                                            />
+                                        </View>
+                                        <View style={styles.numInputGroup}>
+                                            <Text style={styles.inputLabel}>Min Reps</Text>
+                                            <TextInput
+                                                style={styles.input}
+                                                keyboardType="number-pad"
+                                                value={minReps}
+                                                onChangeText={setMinReps}
+                                            />
+                                        </View>
+                                        <View style={styles.numInputGroup}>
+                                            <Text style={styles.inputLabel}>Max Reps</Text>
+                                            <TextInput
+                                                style={styles.input}
+                                                keyboardType="number-pad"
+                                                value={maxReps}
+                                                onChangeText={setMaxReps}
+                                            />
+                                        </View>
+                                    </View>
+
+                                    <View style={styles.modalButtonRow}>
+                                        <TouchableOpacity
+                                            style={[styles.modalButton, styles.cancelButton]}
+                                            onPress={() => {
+                                                setIsAddingExerciseInline(false);
+                                                setExerciseError(null);
+                                            }}
+                                            disabled={isSubmittingExercise}
+                                        >
+                                            <Text style={styles.cancelButtonText}>Cancel</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[
+                                                styles.modalButton,
+                                                styles.submitButton,
+                                                (!exerciseName.trim() || isSubmittingExercise) && styles.disabledButton,
+                                            ]}
+                                            onPress={() => void handleCreateExerciseInline()}
+                                            disabled={!exerciseName.trim() || isSubmittingExercise}
+                                        >
+                                            <Text style={styles.submitButtonText}>
+                                                {isSubmittingExercise ? "Adding..." : "Save"}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            )}
+
+                            {exerciseError ? <Text style={styles.routineError}>{exerciseError}</Text> : null}
+
+                            {editingRoutine?.planned_exercises.length === 0 ? (
+                                <Text style={styles.emptyExerciseText}>No exercises in this routine yet.</Text>
+                            ) : (
+                                editingRoutine?.planned_exercises.map((exercise) => (
+                                    <View key={exercise.id} style={styles.manageExerciseRow}>
+                                        <View style={styles.manageExerciseCopy}>
+                                            <Text style={styles.manageExerciseName}>{exercise.exercise_name}</Text>
+                                            <Text style={styles.manageExerciseMeta}>
+                                                {exercise.target_sets} sets × {exercise.min_reps}–{exercise.max_reps} reps
+                                            </Text>
+                                        </View>
+                                        <TouchableOpacity
+                                            style={[
+                                                styles.deleteExerciseButton,
+                                                deletingExerciseId === exercise.id && styles.disabledButton,
+                                            ]}
+                                            onPress={() => void handleDeleteExercise(exercise.id)}
+                                            disabled={deletingExerciseId !== null}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={`Remove ${exercise.exercise_name}`}
+                                        >
+                                            <Text style={styles.deleteExerciseButtonText}>
+                                                {deletingExerciseId === exercise.id ? "…" : "−"}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                ))
+                            )}
+                        </ScrollView>
                     </View>
                 </KeyboardAvoidingView>
             </Modal>
@@ -670,28 +838,117 @@ const styles = StyleSheet.create({
     scheduleSection: {
         gap: 10,
     },
+    scheduleHeaderRow: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+    },
+    scheduleCounter: {
+        color: "#64748b",
+        fontSize: 12,
+        fontWeight: "700",
+    },
     sectionTitle: {
         color: "#172033",
         fontSize: 18,
         fontWeight: "800",
     },
-    dayCard: {
+    carouselContainer: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+    },
+    arrowButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: "#ffffff",
+        borderWidth: 1,
+        borderColor: "#dbe4ee",
+        alignItems: "center",
+        justifyContent: "center",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 2,
+        elevation: 1,
+    },
+    arrowText: {
+        color: "#0f766e",
+        fontSize: 28,
+        fontWeight: "700",
+        lineHeight: 32,
+        textAlign: "center",
+    },
+    singleDayCard: {
+        flex: 1,
+        height: 160,
         padding: 16,
         backgroundColor: "#ffffff",
         borderWidth: 1,
         borderColor: "#dbe4ee",
-        borderRadius: 8,
-        gap: 4,
+        borderRadius: 12,
+        justifyContent: "space-between",
+        alignItems: "center",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 4,
+        elevation: 2,
     },
-    dayName: {
-        color: "#64748b",
-        fontSize: 13,
-        fontWeight: "700",
+    singleDayCardToday: {
+        borderColor: "#0f766e",
+        borderWidth: 2,
     },
-    dayRoutine: {
+    dayBadgeRow: {
+        width: "100%",
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+    },
+    todayIndicator: {
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        backgroundColor: "#f0fdfa",
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: "#99f6e4",
+    },
+    todayIndicatorText: {
+        color: "#0f766e",
+        fontSize: 10,
+        fontWeight: "800",
+        letterSpacing: 0.5,
+    },
+    tapToEditHint: {
+        color: "#94a3b8",
+        fontSize: 11,
+        fontWeight: "600",
+        marginLeft: "auto",
+    },
+    singleDayName: {
         color: "#172033",
+        fontSize: 22,
+        fontWeight: "700",
+        textAlign: "center",
+    },
+    routineDisplayBox: {
+        width: "100%",
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        backgroundColor: "#f8fafc",
+        borderRadius: 8,
+        alignItems: "center",
+    },
+    singleDayRoutine: {
+        color: "#0f766e",
         fontSize: 16,
         fontWeight: "700",
+        textAlign: "center",
+    },
+    restRoutineText: {
+        color: "#64748b",
     },
     emptySchedule: {
         padding: 16,
@@ -755,16 +1012,16 @@ const styles = StyleSheet.create({
         fontSize: 14,
         lineHeight: 20,
     },
-    addExerciseButton: {
-        paddingHorizontal: 10,
+    editRoutineButton: {
+        paddingHorizontal: 12,
         paddingVertical: 5,
-        backgroundColor: "#f0fdfa",
+        backgroundColor: "#f1f5f9",
         borderWidth: 1,
-        borderColor: "#0f766e",
+        borderColor: "#cbd5e1",
         borderRadius: 6,
     },
-    addExerciseButtonText: {
-        color: "#0f766e",
+    editRoutineButtonText: {
+        color: "#334155",
         fontSize: 12,
         fontWeight: "700",
     },
@@ -802,6 +1059,125 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         alignItems: "center",
         padding: 20,
+    },
+    routineEditorOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0, 0, 0, 0.5)",
+        justifyContent: "flex-end",
+    },
+    modalSheetContent: {
+        backgroundColor: "#ffffff",
+        borderTopLeftRadius: 16,
+        borderTopRightRadius: 16,
+        padding: 18,
+        maxHeight: "85%",
+        width: "100%",
+        gap: 12,
+    },
+    sheetHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingBottom: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: "#edf2f7",
+        gap: 12,
+    },
+    sheetHeadingCopy: {
+        flex: 1,
+        gap: 4,
+    },
+    sheetTitle: {
+        fontSize: 18,
+        fontWeight: "800",
+        color: "#0f172a",
+    },
+    sheetSubtitle: {
+        fontSize: 12,
+        fontWeight: "600",
+        color: "#64748b",
+    },
+    closeSheetButton: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        backgroundColor: "#0f766e",
+        borderRadius: 6,
+    },
+    closeSheetButtonText: {
+        color: "#ffffff",
+        fontSize: 13,
+        fontWeight: "700",
+    },
+    routineEditorScroll: {
+        flexShrink: 1,
+    },
+    routineEditorContent: {
+        gap: 12,
+        paddingBottom: 8,
+    },
+    openAddExerciseBar: {
+        backgroundColor: "#f0fdfa",
+        borderWidth: 1,
+        borderColor: "#99f6e4",
+        borderStyle: "dashed",
+        borderRadius: 8,
+        paddingVertical: 12,
+        alignItems: "center",
+    },
+    openAddExerciseBarText: {
+        color: "#0f766e",
+        fontSize: 14,
+        fontWeight: "800",
+    },
+    inlineFormCard: {
+        backgroundColor: "#f8fafc",
+        borderWidth: 1,
+        borderColor: "#e2e8f0",
+        borderRadius: 8,
+        padding: 12,
+        gap: 8,
+    },
+    formHeading: {
+        fontSize: 13,
+        fontWeight: "700",
+        color: "#1e293b",
+    },
+    manageExerciseRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingVertical: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: "#f1f5f9",
+        gap: 12,
+    },
+    manageExerciseCopy: {
+        flex: 1,
+    },
+    manageExerciseName: {
+        fontSize: 15,
+        fontWeight: "700",
+        color: "#172033",
+    },
+    manageExerciseMeta: {
+        fontSize: 12,
+        fontWeight: "600",
+        color: "#64748b",
+        marginTop: 2,
+    },
+    deleteExerciseButton: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: "#fee2e2",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    deleteExerciseButtonText: {
+        fontSize: 20,
+        fontWeight: "800",
+        color: "#dc2626",
+        lineHeight: 22,
     },
     modalContent: {
         width: "100%",
