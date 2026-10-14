@@ -46,6 +46,7 @@ export type RoutineDay = {
 
 //shape of an active routine ready for a workout session
 export interface DayRoutineDetails {
+    routine_day_id: string;
     day_of_week: number;
     isRestDay: boolean;
     routine: (Routine & { planned_exercises: PlannedExercise[] }) | null;
@@ -103,6 +104,7 @@ export async function fetchCurrentDayRoutine(workoutPlanId: string, dayOfWeek: n
         const { data, error } = await supabase
         .from("routine_days")
         .select(`
+            id,
             day_of_week,
             routine_id,
             is_rest_day,
@@ -125,6 +127,7 @@ export async function fetchCurrentDayRoutine(workoutPlanId: string, dayOfWeek: n
 
         const assignedRoutine = Array.isArray(data.routines) ? data.routines[0] : data.routines;
         return {
+            routine_day_id: data.id,
             day_of_week: data.day_of_week,
             isRestDay: !data.routine_id || data.is_rest_day,
             routine: assignedRoutine ?? null,
@@ -288,6 +291,22 @@ export async function createPlannedExercise(input: {
     }
 
     return data as PlannedExercise;
+}
+
+export async function deletePlannedExercise(exerciseId: string): Promise<void> {
+    if (!exerciseId) {
+        throw new Error("Exercise ID is required.");
+    }
+
+    const { error } = await supabase
+        .from("planned_exercises")
+        .delete()
+        .eq("id", exerciseId);
+
+    if (error) {
+        console.error("Error deleting planned exercise:", error);
+        throw error;
+    }
 }
 
 export async function fetchPlanDashboardData(characterId: string, planId?: string): Promise<PlanDashboardData | null> {
